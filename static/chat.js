@@ -60,7 +60,6 @@ connection.onerror = function (error) {
 
 connection.onmessage = function (e) {
 	var message_json = JSON.parse(e.data);
-	//console.log("message "+  JSON.stringify(message_json, null, 2));
 	switch (message_json.type) {
 		case "login": ProcessLogin(message_json); break;
 		case "message": ProcessMessage(message_json); break;
