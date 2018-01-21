@@ -68,21 +68,6 @@ fn cookies_get(cookies: Cookies) -> String {
     }
 }
 
-/*fn make_messages(&std::vec::Vec::<(ChatUser, ChatMessage)> &messages) -> String {
-    let mut answer_str : String = "{\"messages\":[";
-    let mut first = true;
-    for mes in &messages {
-        let (u, m) = mes;
-        if first {
-            first = false
-        } else {
-            answer_str.push(',');
-        }
-        answer_str.push_str(format!("{{\"author\":\"{}\",\"message\":\"{}\"}}", u, m));
-    }
-    answer_str.push_str("]}");
-}*/
-
 /* Request fields:
  * type: login | logout | ping | message
  * token (for logout, ping, message)
@@ -189,7 +174,6 @@ fn process_message(value: &serde_json::Value) -> serde_json::Value {
         res["err"] = json!("format");
     }
     res
-
 }
 
 fn main() {
@@ -198,18 +182,19 @@ fn main() {
             move |msg| {
                 match msg {
                     ws::Message::Text(text) => {
-                        let v: serde_json::Value = serde_json::from_str(text.as_str()).unwrap();
-                        let ref req_type_v = v["type"];
-                        let req_type = match req_type_v {
-                            &serde_json::Value::String(ref s) => s,
-                            _ => return Err(ws::Error{kind : ws::ErrorKind::Internal, details: std::borrow::Cow::Borrowed("Can't find message type")})
+                        let v = match serde_json::from_str(text.as_str()) {
+                            Ok(value) => value,
+                            _ => serde_json::Value::Null,
                         };
-
-                        let resp_value = match req_type.as_str() {
-                            "login" => process_login(&v),
-                            "ping" => process_ping(&v),
-                            "message" => process_message(&v),
-                            _ => json!({"status":"failure","err":"unsupported"})
+                        let resp_value = if let serde_json::Value::String(ref req_type) = v["type"] {
+                            match req_type.as_str() {
+                                "login" => process_login(&v),
+                                "ping" => process_ping(&v),
+                                "message" => process_message(&v),
+                                _ => json!({"status":"failure","err":"unsupported"})
+                            }
+                        } else {
+                            json!({"status":"failure","err":"format"})
                         };
                         out.send(resp_value.to_string())
                                             }
