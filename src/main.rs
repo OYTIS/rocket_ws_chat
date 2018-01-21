@@ -69,14 +69,14 @@ fn cookies_get(cookies: Cookies) -> String {
 }
 
 /* Request fields:
- * type: login | logout | ping | message
- * token (for logout, ping, message)
+ * type: login | ping | message
+ * token (for ping, message)
  * uname (for login)
  * text (for message)
  */
 
 /* Response fields:
- * type: login | logout | ping | message
+ * type: login | ping | message
  * status: ok | failure
  * err (for errored requests)
  * token (for login)
@@ -104,7 +104,7 @@ fn process_login(value: &serde_json::Value) -> serde_json::Value {
     let ref mut user_tokens = *USER_TOKENS.lock().unwrap();
     let ref messages = *MESSAGES.lock().unwrap();
     let ref uname = value["uname"];
-    let mut res : serde_json::Value = json!({});
+    let mut res : serde_json::Value = json!({"type":"login"});
 
     if let &serde_json::Value::String(ref u) = uname {
         if users.contains(u) {
@@ -127,7 +127,7 @@ fn process_login(value: &serde_json::Value) -> serde_json::Value {
 }
 
 fn process_ping(value: &serde_json::Value) -> serde_json::Value {
-    let mut res : serde_json::Value = json!({});
+    let mut res : serde_json::Value = json!({"type":"ping"});
     let ref user_tokens = *USER_TOKENS.lock().unwrap();
     let ref messages = *MESSAGES.lock().unwrap();
     let ref token = value["token"];
@@ -148,7 +148,7 @@ fn process_ping(value: &serde_json::Value) -> serde_json::Value {
 }
 
 fn process_message(value: &serde_json::Value) -> serde_json::Value {
-    let mut res : serde_json::Value = json!({});
+    let mut res : serde_json::Value = json!({"type":"message"});
     let ref users = *USERS.lock().unwrap();
     let ref user_tokens = *USER_TOKENS.lock().unwrap();
     let ref mut messages = *MESSAGES.lock().unwrap();
