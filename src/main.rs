@@ -18,24 +18,9 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Mutex;
 
-#[get("/<is_hello>")]
-fn index_bool(is_hello: bool) -> &'static str {
-    if is_hello {
-        "Hello, hello!"
-    }
-    else {
-        "Not hello at all!"
-    }
-}
-
 #[get("/<file..>", rank = 1)]
 fn files(file: PathBuf) -> Option<NamedFile> {
-    NamedFile::open(Path::new("/etc/").join(file)).ok()
-}
-
-#[get("/<name>", rank = 3)]
-fn index(name: &RawStr) -> String {
-    format!("Hello, {}!", name.as_str())
+    NamedFile::open(Path::new("static/").join(file)).ok()
 }
 
 #[get("/cookies_set/<message>")]
@@ -95,7 +80,8 @@ lazy_static! {
 
 fn conv_message(pair :&(ChatUser, ChatMessage)) -> serde_json::Value {
     let mut res : serde_json::Value = json!({});
-    res[pair.clone().0] = json!(pair.clone().1);
+    res["uname"] = json!(pair.clone().0);
+    res["message"] = json!(pair.clone().1);
     res
 }
 
@@ -203,6 +189,6 @@ fn main() {
             }
         })
     });
-    rocket::ignite().mount("/", routes![index, cookies_get, cookies_set]).launch();
+    rocket::ignite().mount("/", routes![files, cookies_get, cookies_set]).launch();
 }
 
