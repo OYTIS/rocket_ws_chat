@@ -17,6 +17,7 @@ use rocket::response::NamedFile;
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Mutex;
+use std::sync::Arc;
 
 #[get("/<file..>", rank = 1)]
 fn files(file: PathBuf) -> Option<NamedFile> {
@@ -70,101 +71,121 @@ fn cookies_get(cookies: Cookies) -> String {
 type ChatUser = String;
 type ChatMessage = String;
 type ChatToken = i32;
-
-lazy_static! {
-  static ref USERS : Mutex<std::collections::HashSet<ChatUser>> = Mutex::new(std::collections::HashSet::new());
-  static ref USER_TOKENS : Mutex<std::collections::HashMap<ChatToken, ChatUser>> = Mutex::new(std::collections::HashMap::new());
-  static ref MESSAGES : Mutex<std::vec::Vec<(ChatUser, ChatMessage)>> = Mutex::new(vec![]);
-  static ref TOK_COUNTER : Mutex<i32> = Mutex::new(0);
+struct WsChat {
+  user_tokens : std::collections::HashMap<ChatToken, ChatUser>,
+  messages : std::vec::Vec<(ChatUser, ChatMessage)>,
+  tok_counter : i32,
 }
 
-fn conv_message(pair :&(ChatUser, ChatMessage)) -> serde_json::Value {
-    let mut res : serde_json::Value = json!({});
-    res["uname"] = json!(pair.clone().0);
-    res["message"] = json!(pair.clone().1);
-    res
-}
+impl WsChat {
+    pub fn new() -> WsChat {
+        let user_tokens = std::collections::HashMap::new();
+        let messages = vec![];
+        let tok_counter = 0;
 
-fn process_login(value: &serde_json::Value) -> serde_json::Value {
-    let ref mut users = *USERS.lock().unwrap();
-    let ref mut user_tokens = *USER_TOKENS.lock().unwrap();
-    let ref messages = *MESSAGES.lock().unwrap();
-    let ref uname = value["uname"];
-    let mut res : serde_json::Value = json!({"type":"login"});
-
-    if let &serde_json::Value::String(ref u) = uname {
-        if users.contains(u) {
-            res["status"] = json!("failure");
-            res["err"] = json!("already_exists");
-        } else {
-            users.insert(u.clone());
-            let ref mut tok = *TOK_COUNTER.lock().unwrap();
-            user_tokens.insert(*tok, u.clone());
-            res["status"] = json!("success");
-            res["token"] = json!(tok);
-            res["messages"] = messages.iter().map(conv_message).collect(); 
-            *tok += 1;
+        WsChat {
+            user_tokens : user_tokens,
+            messages : messages,
+            tok_counter : tok_counter
         }
-    } else {
-        res["status"] = json!("failure");
-        res["err"] = json!("format");
     }
-    res
-}
-
-fn process_ping(value: &serde_json::Value) -> serde_json::Value {
-    let mut res : serde_json::Value = json!({"type":"ping"});
-    let ref user_tokens = *USER_TOKENS.lock().unwrap();
-    let ref messages = *MESSAGES.lock().unwrap();
-    let ref token = value["token"];
-
-    if let &serde_json::Value::Number(ref t) = token {
-        if !user_tokens.contains_key(&(t.as_i64().unwrap() as i32)) {
-            res["status"] = json!("failure");
-            res["err"] = json!("authentication_failed");
-        } else {
-            res["status"] = json!("success");
-            res["messages"] = messages.iter().map(conv_message).collect();
-        }
-    } else {
-        res["status"] = json!("failure");
-        res["err"] = json!("format");
+    fn conv_message(pair :&(ChatUser, ChatMessage)) -> serde_json::Value {
+        let mut res : serde_json::Value = json!({});
+        res["uname"] = json!(pair.clone().0);
+        res["message"] = json!(pair.clone().1);
+        res
     }
-    res
-}
 
-fn process_message(value: &serde_json::Value) -> serde_json::Value {
-    let mut res : serde_json::Value = json!({"type":"message"});
-    let ref users = *USERS.lock().unwrap();
-    let ref user_tokens = *USER_TOKENS.lock().unwrap();
-    let ref mut messages = *MESSAGES.lock().unwrap();
-    let ref token = value["token"];
+    fn process_login(&mut self, value: &serde_json::Value) -> serde_json::Value {
+        let ref uname = value["uname"];
+        let mut res : serde_json::Value = json!({"type":"login"});
 
-    if let &serde_json::Value::Number(ref t) = token {
-        if let Some(user) = user_tokens.get(&(t.as_i64().unwrap() as i32)) {
-            let ref message_v = value["message"];
-            if let &serde_json::Value::String(ref message) = message_v {
-                messages.push((user.clone(), message.clone()));
+        if let &serde_json::Value::String(ref u) = uname {
+            //if self.user_tokens.contains_key(u) {
+            //    res["status"] = json!("failure");
+            //    res["err"] = json!("already_exists");
+            //} else {
+                self.user_tokens.insert(self.tok_counter, u.clone());
                 res["status"] = json!("success");
-                res["messages"] = messages.iter().map(conv_message).collect();
-            } else {
+                res["token"] = json!(self.tok_counter);
+                res["messages"] = self.messages.iter().map(WsChat::conv_message).collect(); 
+                self.tok_counter += 1;
+            //}
+        } else {
+            res["status"] = json!("failure");
+            res["err"] = json!("format");
+        }
+        res
+    }
+
+    fn process_ping(&mut self, value: &serde_json::Value) -> serde_json::Value {
+        let mut res : serde_json::Value = json!({"type":"ping"});
+        let ref token = value["token"];
+
+        if let &serde_json::Value::Number(ref t) = token {
+            if !self.user_tokens.contains_key(&(t.as_i64().unwrap() as i32)) {
                 res["status"] = json!("failure");
-                res["err"] = json!("format");
+                res["err"] = json!("authentication_failed");
+            } else {
+                res["status"] = json!("success");
+                res["messages"] = self.messages.iter().map(WsChat::conv_message).collect();
             }
         } else {
             res["status"] = json!("failure");
-            res["err"] = json!("authentication_failed");
+            res["err"] = json!("format");
         }
-    } else {
-        res["status"] = json!("failure");
-        res["err"] = json!("format");
+        res
     }
-    res
+
+    fn process_message(&mut self, value: &serde_json::Value) -> serde_json::Value {
+        let mut res : serde_json::Value = json!({"type":"message"});
+        let ref token = value["token"];
+
+        if let &serde_json::Value::Number(ref t) = token {
+            if let Some(user) = self.user_tokens.get(&(t.as_i64().unwrap() as i32)) {
+                let ref message_v = value["message"];
+                if let &serde_json::Value::String(ref message) = message_v {
+                    self.messages.push((user.clone(), message.clone()));
+                    res["status"] = json!("success");
+                    res["messages"] = self.messages.iter().map(WsChat::conv_message).collect();
+                } else {
+                    res["status"] = json!("failure");
+                    res["err"] = json!("format");
+                }
+            } else {
+                res["status"] = json!("failure");
+                res["err"] = json!("authentication_failed");
+            }
+        } else {
+            res["status"] = json!("failure");
+            res["err"] = json!("format");
+        }
+        res
+    }
+    
+    pub fn dispatch(&mut self, value: &serde_json::Value) -> serde_json::Value {
+        if let serde_json::Value::String(ref req_type) = value["type"] {
+            match req_type.as_str() {
+                "login" => self.process_login(&value),
+                "ping" => self.process_ping(&value),
+                "message" => self.process_message(&value),
+                _ => json!({"status":"failure","err":"unsupported"})
+            }
+        } else {
+            json!({"status":"failure","err":"format"})
+        }
+    }
 }
 
+
+
+
+
 fn main() {
+    let ws_chat = Arc::new(Mutex::new(WsChat::new()));
     std::thread::spawn(move|| {
         ws::listen("127.0.0.1:3012", move |out| {
+            let ws_chat = ws_chat.clone();
             move |msg| {
                 match msg {
                     ws::Message::Text(text) => {
@@ -172,18 +193,10 @@ fn main() {
                             Ok(value) => value,
                             _ => serde_json::Value::Null,
                         };
-                        let resp_value = if let serde_json::Value::String(ref req_type) = v["type"] {
-                            match req_type.as_str() {
-                                "login" => process_login(&v),
-                                "ping" => process_ping(&v),
-                                "message" => process_message(&v),
-                                _ => json!({"status":"failure","err":"unsupported"})
-                            }
-                        } else {
-                            json!({"status":"failure","err":"format"})
-                        };
+                        let mut ws_chat_unlocked = ws_chat.lock().unwrap();
+                        let resp_value = ws_chat_unlocked.dispatch(&v);
                         out.send(resp_value.to_string())
-                                            }
+                    }
                     ws::Message::Binary(_) => return Err(ws::Error{kind : ws::ErrorKind::Internal, details: std::borrow::Cow::Borrowed("Binary messages are not supported")})
                 }
             }
