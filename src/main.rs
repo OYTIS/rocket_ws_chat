@@ -70,20 +70,23 @@ fn cookies_get(cookies: Cookies) -> String {
  */
 type ChatUser = String;
 type ChatMessage = String;
-type ChatToken = i32;
+type ChatToken = i64;
 struct WsChat {
+  users : std::collections::HashSet<ChatUser>,
   user_tokens : std::collections::HashMap<ChatToken, ChatUser>,
   messages : std::vec::Vec<(ChatUser, ChatMessage)>,
-  tok_counter : i32,
+  tok_counter : i64,
 }
 
 impl WsChat {
     pub fn new() -> WsChat {
+        let users = std::collections::HashSet::new();
         let user_tokens = std::collections::HashMap::new();
         let messages = vec![];
         let tok_counter = 0;
 
         WsChat {
+            users : users,
             user_tokens : user_tokens,
             messages : messages,
             tok_counter : tok_counter
@@ -101,16 +104,17 @@ impl WsChat {
         let mut res : serde_json::Value = json!({"type":"login"});
 
         if let &serde_json::Value::String(ref u) = uname {
-            //if self.user_tokens.contains_key(u) {
-            //    res["status"] = json!("failure");
-            //    res["err"] = json!("already_exists");
-            //} else {
-                self.user_tokens.insert(self.tok_counter, u.clone());
+            if self.users.contains(u) {
+                res["status"] = json!("failure");
+                res["err"] = json!("already_exists");
+            } else {
+                self.users.insert(u.clone());
+                self.user_tokens.insert(self.tok_counter,u.clone());
                 res["status"] = json!("success");
                 res["token"] = json!(self.tok_counter);
                 res["messages"] = self.messages.iter().map(WsChat::conv_message).collect(); 
                 self.tok_counter += 1;
-            //}
+            }
         } else {
             res["status"] = json!("failure");
             res["err"] = json!("format");
@@ -123,7 +127,11 @@ impl WsChat {
         let ref token = value["token"];
 
         if let &serde_json::Value::Number(ref t) = token {
-            if !self.user_tokens.contains_key(&(t.as_i64().unwrap() as i32)) {
+            let t_64 : i64 = match t.as_i64() {
+                Some(val) => val,
+                None => return json!({"status":"failure", "err":"format"}),
+            };
+            if !self.user_tokens.contains_key(&t_64) {
                 res["status"] = json!("failure");
                 res["err"] = json!("authentication_failed");
             } else {
@@ -142,7 +150,11 @@ impl WsChat {
         let ref token = value["token"];
 
         if let &serde_json::Value::Number(ref t) = token {
-            if let Some(user) = self.user_tokens.get(&(t.as_i64().unwrap() as i32)) {
+            let t_64 : i64 = match t.as_i64() {
+                Some(val) => val,
+                None => return json!({"status":"failure", "err":"format"}),
+            };
+            if let Some(user) = self.user_tokens.get(&t_64) {
                 let ref message_v = value["message"];
                 if let &serde_json::Value::String(ref message) = message_v {
                     self.messages.push((user.clone(), message.clone()));
@@ -193,8 +205,11 @@ fn main() {
                             Ok(value) => value,
                             _ => serde_json::Value::Null,
                         };
-                        let mut ws_chat_unlocked = ws_chat.lock().unwrap();
-                        let resp_value = ws_chat_unlocked.dispatch(&v);
+                        let resp_value = if let Ok(mut ws_chat_unlocked) = ws_chat.lock() {
+                            ws_chat_unlocked.dispatch(&v)
+                        } else {
+                            json!({"status":"failure","err":"system"})
+                        };
                         out.send(resp_value.to_string())
                     }
                     ws::Message::Binary(_) => return Err(ws::Error{kind : ws::ErrorKind::Internal, details: std::borrow::Cow::Borrowed("Binary messages are not supported")})
