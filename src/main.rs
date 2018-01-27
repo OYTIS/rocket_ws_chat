@@ -72,18 +72,18 @@ type ChatUser = String;
 type ChatMessage = String;
 type ChatToken = i64;
 struct WsChat {
-  users : std::collections::HashSet<ChatUser>,
-  user_tokens : std::collections::HashMap<ChatToken, ChatUser>,
-  messages : std::vec::Vec<(ChatUser, ChatMessage)>,
-  tok_counter : i64,
+  users : Mutex<std::collections::HashSet<ChatUser>>,
+  user_tokens : Mutex<std::collections::HashMap<ChatToken, ChatUser>>,
+  messages : Mutex<std::vec::Vec<(ChatUser, ChatMessage)>>,
+  tok_counter : Mutex<i64>,
 }
 
 impl WsChat {
     pub fn new() -> WsChat {
-        let users = std::collections::HashSet::new();
-        let user_tokens = std::collections::HashMap::new();
-        let messages = vec![];
-        let tok_counter = 0;
+        let users = Mutex::new(std::collections::HashSet::new());
+        let user_tokens = Mutex::new(std::collections::HashMap::new());
+        let messages = Mutex::new(vec![]);
+        let tok_counter = Mutex::new(0);
 
         WsChat {
             users : users,
@@ -99,21 +99,38 @@ impl WsChat {
         res
     }
 
-    fn process_login(&mut self, value: &serde_json::Value) -> serde_json::Value {
+    fn process_login(&self, value: &serde_json::Value) -> serde_json::Value {
         let ref uname = value["uname"];
         let mut res : serde_json::Value = json!({"type":"login"});
 
         if let &serde_json::Value::String(ref u) = uname {
-            if self.users.contains(u) {
+            let mut users = match self.users.lock() {
+                Ok(u) => u,
+                Err(_) => return json!({"status":"failure", "err":"system"}),
+            };
+            if users.contains(u) {
                 res["status"] = json!("failure");
                 res["err"] = json!("already_exists");
             } else {
-                self.users.insert(u.clone());
-                self.user_tokens.insert(self.tok_counter,u.clone());
+                let mut user_tokens = match self.user_tokens.lock() {
+                    Ok(u) => u,
+                    Err(_) => return json!({"status":"failure", "err":"system"}),
+                };
+                let mut tok_counter_g = match self.tok_counter.lock() {
+                    Ok(t) => t,
+                    Err(_) => return json!({"status":"failure", "err":"system"}),
+                };
+                let messages = match self.messages.lock() {
+                    Ok(m) => m,
+                    Err(_) => return json!({"status":"failure", "err":"system"}),
+                };
+
+                users.insert(u.clone());
+                user_tokens.insert(*tok_counter_g, u.clone());
                 res["status"] = json!("success");
-                res["token"] = json!(self.tok_counter);
-                res["messages"] = self.messages.iter().map(WsChat::conv_message).collect(); 
-                self.tok_counter += 1;
+                res["token"] = json!(*tok_counter_g);
+                res["messages"] = messages.iter().map(WsChat::conv_message).collect(); 
+                *tok_counter_g += 1;
             }
         } else {
             res["status"] = json!("failure");
@@ -122,7 +139,7 @@ impl WsChat {
         res
     }
 
-    fn process_ping(&mut self, value: &serde_json::Value) -> serde_json::Value {
+    fn process_ping(&self, value: &serde_json::Value) -> serde_json::Value {
         let mut res : serde_json::Value = json!({"type":"ping"});
         let ref token = value["token"];
 
@@ -131,12 +148,21 @@ impl WsChat {
                 Some(val) => val,
                 None => return json!({"status":"failure", "err":"format"}),
             };
-            if !self.user_tokens.contains_key(&t_64) {
+            let user_tokens = match self.user_tokens.lock() {
+                Ok(u) => u,
+                Err(_) => return json!({"status":"failure", "err":"system"}),
+            };
+
+            if !user_tokens.contains_key(&t_64) {
                 res["status"] = json!("failure");
                 res["err"] = json!("authentication_failed");
             } else {
                 res["status"] = json!("success");
-                res["messages"] = self.messages.iter().map(WsChat::conv_message).collect();
+                let messages = match self.messages.lock() {
+                    Ok(m) => m,
+                    Err(_) => return json!({"status":"failure", "err":"system"}),
+                };
+                res["messages"] = messages.iter().map(WsChat::conv_message).collect();
             }
         } else {
             res["status"] = json!("failure");
@@ -145,7 +171,7 @@ impl WsChat {
         res
     }
 
-    fn process_message(&mut self, value: &serde_json::Value) -> serde_json::Value {
+    fn process_message(&self, value: &serde_json::Value) -> serde_json::Value {
         let mut res : serde_json::Value = json!({"type":"message"});
         let ref token = value["token"];
 
@@ -154,12 +180,20 @@ impl WsChat {
                 Some(val) => val,
                 None => return json!({"status":"failure", "err":"format"}),
             };
-            if let Some(user) = self.user_tokens.get(&t_64) {
+            let user_tokens = match self.user_tokens.lock() {
+                Ok(m) => m,
+                Err(_) => return json!({"status":"failure", "err":"system"}),
+            };
+            if let Some(user) = user_tokens.get(&t_64) {
                 let ref message_v = value["message"];
                 if let &serde_json::Value::String(ref message) = message_v {
-                    self.messages.push((user.clone(), message.clone()));
+                    let mut messages = match self.messages.lock() {
+                        Ok(m) => m,
+                        Err(_) => return json!({"status":"failure", "err":"system"}),
+                    };
+                    messages.push((user.clone(), message.clone()));
                     res["status"] = json!("success");
-                    res["messages"] = self.messages.iter().map(WsChat::conv_message).collect();
+                    res["messages"] = messages.iter().map(WsChat::conv_message).collect();
                 } else {
                     res["status"] = json!("failure");
                     res["err"] = json!("format");
@@ -175,7 +209,7 @@ impl WsChat {
         res
     }
     
-    pub fn dispatch(&mut self, value: &serde_json::Value) -> serde_json::Value {
+    pub fn dispatch(&self, value: &serde_json::Value) -> serde_json::Value {
         if let serde_json::Value::String(ref req_type) = value["type"] {
             match req_type.as_str() {
                 "login" => self.process_login(&value),
@@ -194,7 +228,7 @@ impl WsChat {
 
 
 fn main() {
-    let ws_chat = Arc::new(Mutex::new(WsChat::new()));
+    let ws_chat = Arc::new(WsChat::new());
     std::thread::spawn(move|| {
         ws::listen("127.0.0.1:3012", move |out| {
             let ws_chat = ws_chat.clone();
@@ -205,11 +239,7 @@ fn main() {
                             Ok(value) => value,
                             _ => serde_json::Value::Null,
                         };
-                        let resp_value = if let Ok(mut ws_chat_unlocked) = ws_chat.lock() {
-                            ws_chat_unlocked.dispatch(&v)
-                        } else {
-                            json!({"status":"failure","err":"system"})
-                        };
+                        let resp_value = ws_chat.dispatch(&v);
                         out.send(resp_value.to_string())
                     }
                     ws::Message::Binary(_) => return Err(ws::Error{kind : ws::ErrorKind::Internal, details: std::borrow::Cow::Borrowed("Binary messages are not supported")})
