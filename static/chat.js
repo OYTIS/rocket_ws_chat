@@ -1,6 +1,6 @@
 window.onload = function() {
 var connection = new WebSocket('ws://127.0.0.1:3012/ws');
-var token = -1;
+var token = "";
 var logged_in = false;
 
 function OutputMessages(messages) {
@@ -79,7 +79,7 @@ function OnSendClick() {
 	var content = document.getElementById('message_input').value;
 	document.getElementById('message_input').value = '';
 	content = encodeURI(content);
-	connection.send('{"type":"message","token":' + token + ',"message":"' + content+'"}');
+	connection.send('{"type":"message","token":"' + token + '","message":"' + content+'"}');
 }
 
 var loginButton = document.getElementById("login_button");
@@ -89,8 +89,9 @@ var sendButton = document.getElementById("send_button");
 sendButton.addEventListener('click', OnSendClick);
 
 function SendPing() {
-	if(logged_in)
-		connection.send('{"type":"ping","token":' + token + '}');
+	if(logged_in) {
+		connection.send('{"type":"ping","token":"' + token + '"}');
+	}
 }
 
 }
