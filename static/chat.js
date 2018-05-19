@@ -3,12 +3,22 @@ var connection = new WebSocket('ws://127.0.0.1:3012/ws');
 var token = "";
 var logged_in = false;
 
+var unameColorMap = new Map();
+
 function OutputMessages(messages) {
 	var chatWindow = document.getElementById('chatwindow');
 	chatWindow.innerHTML = '';
 	for (i in messages) {
 		var newMessage = document.createElement('p');
+		var color;
+		if(unameColorMap.has(messages[i].uname)) {
+			color = unameColorMap.get(messages[i].uname);
+		} else {
+			color = "hsl(" + Math.round(360*Math.random()) + ",100%,50%)";
+			unameColorMap.set(messages[i].uname, color);
+		}
 		newMessage.innerHTML = '<span class="uname">' + messages[i].uname + '</span> <span>' + decodeURI(messages[i].message) + '</span>';
+		newMessage.getElementsByClassName("uname")[0].style.color = color;
 		chatWindow.appendChild(newMessage);
 	}
 }
@@ -33,7 +43,7 @@ function ProcessLogin(message_json) {
 	} else {
 		document.getElementById('login_button').disabled = false;
 		document.getElementById('uname_input').disabled = false;
-		document.getElementById("wserr").innerHTML = "Error: " + message_json.err;
+		document.getElementById("wserr").innerHTML = "<span>Error: " + message_json.err + "</span>";
 	}
 }
 
